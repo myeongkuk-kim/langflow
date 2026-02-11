@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GRADIENT_CLASS } from "@/constants/constants";
 import { customGetHostProtocol } from "@/customization/utils/custom-get-host-protocol";
 import { getCurlWebhookCode } from "@/modals/apiModal/utils/get-curl-code";
@@ -78,6 +78,15 @@ export default function TextAreaComponent({
   const [passwordVisible, setPasswordVisible] = useState(false);
   const webhookAuthEnable = useUtilityStore((state) => state.webhookAuthEnable);
   const [cursor, setCursor] = useState<number | null>(null);
+  const isComposingRef = useRef(false);
+  const [localValue, setLocalValue] = useState(value || "");
+
+  // Sync external value → local when not composing
+  useEffect(() => {
+    if (!isComposingRef.current) {
+      setLocalValue(value || "");
+    }
+  }, [value]);
 
   const isWebhook = useMemo(
     () => nodeInformationMetadata?.nodeType === "webhook",
@@ -110,9 +119,9 @@ export default function TextAreaComponent({
     webhookAuthEnable,
   ]);
 
-  // Restore cursor position after value changes
+  // Restore cursor position after value changes, but not during IME composition
   useEffect(() => {
-    if (cursor !== null && inputRef.current) {
+    if (cursor !== null && inputRef.current && !isComposingRef.current) {
       inputRef.current.setSelectionRange(cursor, cursor);
     }
   }, [cursor, value]);
@@ -128,9 +137,28 @@ export default function TextAreaComponent({
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setCursor(e.target.selectionStart);
-    handleOnNewValue({ value: e.target.value });
+    const newValue = e.target.value;
+    setLocalValue(newValue);
+    if (!isComposingRef.current) {
+      setCursor(e.target.selectionStart);
+      handleOnNewValue({ value: newValue });
+    }
   };
+
+  const handleCompositionStart = useCallback(() => {
+    isComposingRef.current = true;
+  }, []);
+
+  const handleCompositionEnd = useCallback(
+    (e: React.CompositionEvent<HTMLInputElement>) => {
+      isComposingRef.current = false;
+      const finalValue = e.currentTarget.value;
+      setLocalValue(finalValue);
+      setCursor(e.currentTarget.selectionStart);
+      handleOnNewValue({ value: finalValue });
+    },
+    [handleOnNewValue],
+  );
 
   const changeWebhookFormat = (format: "multiline" | "singleline") => {
     if (isWebhook) {
@@ -198,8 +226,10 @@ export default function TextAreaComponent({
         onBlur={() => setIsFocused(false)}
         id={id}
         data-testid={id}
-        value={disabled ? "" : value}
+        value={disabled ? "" : localValue}
         onChange={handleInputChange}
+        onCompositionStart={handleCompositionStart}
+        onCompositionEnd={handleCompositionEnd}
         disabled={disabled}
         className={getInputClassName()}
         placeholder={getPlaceholder(disabled, placeholder)}

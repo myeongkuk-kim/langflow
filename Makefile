@@ -279,6 +279,13 @@ setup_env: ## set up the environment
 
 
 
+dev: setup_env install_backend install_frontend ## run backend and frontend together in development mode
+	@echo "$(GREEN)Starting backend and frontend in development mode...$(NC)"
+	@trap 'kill 0' EXIT; \
+	make backend &\
+	make run_frontend &\
+	wait
+
 backend: setup_env install_backend ## run the backend in development mode
 	@-kill -9 $$(lsof -t -i:7860) || true
 ifdef login

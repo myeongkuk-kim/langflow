@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CHAT_INPUT_MIN_HEIGHT,
   CHAT_INPUT_MAX_HEIGHT,
@@ -87,6 +87,17 @@ const TextAreaWrapper = ({
   const setChatValueStore = useUtilityStore((state) => state.setChatValueStore);
   const previousScrollHeightRef = useRef<number>(CHAT_INPUT_MIN_HEIGHT);
 
+  // Local value to avoid IME composition being broken by store re-renders
+  const [localValue, setLocalValue] = useState(chatValue);
+  const isComposingRef = useRef(false);
+
+  // Sync store → local when store changes externally (e.g., cleared after send)
+  useEffect(() => {
+    if (!isComposingRef.current) {
+      setLocalValue(chatValue);
+    }
+  }, [chatValue]);
+
   const getPlaceholderText = useCallback((): string => {
     if (isDragging) {
       return "Drop here";
@@ -109,28 +120,45 @@ const TextAreaWrapper = ({
     }
   }, [isBuilding, noInput, inputRef]);
 
-  // Resize textarea whenever chatValue changes (handles programmatic changes like clearing after send)
-  // Note: handleChange handles resize for user input, but this ensures programmatic changes also resize
+  // Resize textarea whenever localValue changes
   useEffect(() => {
     const textarea = inputRef.current;
     if (textarea) {
-      resizeTextarea(textarea, chatValue, previousScrollHeightRef);
+      resizeTextarea(textarea, localValue, previousScrollHeightRef);
     }
-  }, [chatValue, inputRef]);
+  }, [localValue, inputRef]);
 
   const handleChange = useCallback(
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
       const newValue = event.target.value;
-      setChatValueStore(newValue);
+      setLocalValue(newValue);
+      // During IME composition, only update local state to avoid
+      // store re-render breaking the composition
+      if (!isComposingRef.current) {
+        setChatValueStore(newValue);
+      }
       // Resize immediately on user input for better UX
       resizeTextarea(event.target, newValue, previousScrollHeightRef);
     },
     [setChatValueStore],
   );
 
+  const handleCompositionStart = useCallback(() => {
+    isComposingRef.current = true;
+  }, []);
+
+  const handleCompositionEnd = useCallback(
+    (event: React.CompositionEvent<HTMLTextAreaElement>) => {
+      isComposingRef.current = false;
+      // Flush the final composed value to the store
+      setChatValueStore(event.currentTarget.value);
+    },
+    [setChatValueStore],
+  );
+
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (checkSendingOk(event)) {
+      if (!isComposingRef.current && checkSendingOk(event)) {
         event.preventDefault();
         send();
       }
@@ -142,10 +170,12 @@ const TextAreaWrapper = ({
     <Textarea
       data-testid="input-chat-playground"
       onKeyDown={handleKeyDown}
+      onCompositionStart={handleCompositionStart}
+      onCompositionEnd={handleCompositionEnd}
       rows={1}
       ref={inputRef}
       disabled={isBuilding || noInput}
-      value={chatValue}
+      value={localValue}
       onChange={handleChange}
       className={classNames(fileClass, additionalClassNames)}
       placeholder={getPlaceholderText()}

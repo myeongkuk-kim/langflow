@@ -1,6 +1,6 @@
 import { PopoverAnchor } from "@radix-ui/react-popover";
 import { X } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Badge } from "@/components/ui/badge";
@@ -191,16 +191,40 @@ const CustomInputPopover = ({
   const [isFocused, setIsFocused] = useState(false);
   const [cursor, setCursor] = useState<number | null>(null);
   const memoizedOptions = useMemo(() => new Set<string>(options), [options]);
+  const isComposingRef = useRef(false);
+  const [localValue, setLocalValue] = useState(value || "");
 
   const PopoverContentInput =
     editNode || inspectionPanel ? PopoverContent : PopoverContentWithoutPortal;
 
-  // Restore cursor position after value changes
+  // Sync external value → local when not composing (e.g., cleared after send)
   useEffect(() => {
-    if (cursor !== null && refInput.current) {
+    if (!isComposingRef.current) {
+      setLocalValue(value || "");
+    }
+  }, [value]);
+
+  // Restore cursor position after value changes, but not during IME composition
+  useEffect(() => {
+    if (cursor !== null && refInput.current && !isComposingRef.current) {
       refInput.current.setSelectionRange(cursor, cursor);
     }
   }, [cursor, value]);
+
+  const handleCompositionStart = useCallback(() => {
+    isComposingRef.current = true;
+  }, []);
+
+  const handleCompositionEnd = useCallback(
+    (e: React.CompositionEvent<HTMLInputElement>) => {
+      isComposingRef.current = false;
+      const finalValue = e.currentTarget.value;
+      setLocalValue(finalValue);
+      setCursor(e.currentTarget.selectionStart);
+      onChange?.(finalValue);
+    },
+    [onChange],
+  );
 
   const handleRemoveOption = (
     optionToRemove: string,
@@ -297,7 +321,7 @@ const CustomInputPopover = ({
                 onInputLostFocus?.();
                 setIsFocused(false);
               }}
-              value={disabled ? "" : value || ""}
+              value={disabled ? "" : localValue}
               disabled={disabled}
               required={required}
               className={getInputClassName(
@@ -313,12 +337,19 @@ const CustomInputPopover = ({
                   : placeholder
               }
               onChange={(e) => {
-                setCursor(e.target.selectionStart);
-                onChange?.(e.target.value);
+                const newValue = e.target.value;
+                setLocalValue(newValue);
+                if (!isComposingRef.current) {
+                  setCursor(e.target.selectionStart);
+                  onChange?.(newValue);
+                }
               }}
+              onCompositionStart={handleCompositionStart}
+              onCompositionEnd={handleCompositionEnd}
               onKeyDown={(e) => {
                 handleKeyDown?.(e);
-                if (blurOnEnter && e.key === "Enter") refInput.current?.blur();
+                if (blurOnEnter && e.key === "Enter" && !isComposingRef.current)
+                  refInput.current?.blur();
               }}
               data-testid={editNode ? id + "-edit" : id}
             />
